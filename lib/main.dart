@@ -1,113 +1,199 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:tflite/tflite.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:image/image.dart' as img;
 
 void main() {
   runApp(MyApp());
 }
 
+const String ssd = "SSD MobileNet";
+const String yolo = "Tiny YOLOv2";
+
 class MyApp extends StatelessWidget {
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // Try running your application with "flutter run". You'll see the
-        // application has a blue toolbar. Then, without quitting the app, try
-        // changing the primarySwatch below to Colors.green and then invoke
-        // "hot reload" (press "r" in the console where you ran "flutter run",
-        // or simply save your changes to "hot reload" in a Flutter IDE).
-        // Notice that the counter didn't reset back to zero; the application
-        // is not restarted.
-        primarySwatch: Colors.blue,
-      ),
-      home: MyHomePage(title: 'Flutter Demo Home Page'),
+      debugShowCheckedModeBanner: false,
+      home: TfliteHome(),
     );
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  MyHomePage({Key key, this.title}) : super(key: key);
-
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
-
+class TfliteHome extends StatefulWidget {
   @override
-  _MyHomePageState createState() => _MyHomePageState();
+  _TfliteHomeState createState() => _TfliteHomeState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _TfliteHomeState extends State<TfliteHome> {
+  String _model = ssd;
+  File _image;
 
-  void _incrementCounter() {
-    setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+  double _imageWidth;
+  double _imageHeight;
+  bool _busy = false;
+
+  List _recognitions;
+
+  @override
+  void initState() {
+    super.initState();
+    _busy = true;
+
+    loadModel().then((val) {
+      setState(() {
+        _busy = false;
+      });
     });
+  }
+
+  loadModel() async {
+    Tflite.close();
+    try {
+      String res;
+      if (_model == yolo) {
+        res = await Tflite.loadModel(
+          model: "assets/tflite/yolov2_tiny.tflite",
+          labels: "assets/tflite/yolov2_tiny.txt",
+        );
+      } else {
+        res = await Tflite.loadModel(
+          model: "assets/tflite/ssd_mobilenet.tflite",
+          labels: "assets/tflite/ssd_mobilenet.txt",
+        );
+      }
+      print(res);
+    } on PlatformException {
+      print("Failed to load the model");
+    }
+  }
+
+  selectFromImagePicker() async {
+    var image = await ImagePicker.pickImage(source: ImageSource.gallery);
+    if (image == null) return;
+    setState(() {
+      _busy = true;
+    });
+    predictImage(image);
+  }
+
+  predictImage(File image) async {
+    if (image == null) return;
+
+    if (_model == yolo) {
+      await yolov2Tiny(image);
+    } else {
+      await ssdMobileNet(image);
+    }
+
+    FileImage(image)
+        .resolve(ImageConfiguration())
+        .addListener((ImageStreamListener((ImageInfo info, bool _) {
+          setState(() {
+            _imageWidth = info.image.width.toDouble();
+            _imageHeight = info.image.height.toDouble();
+          });
+        })));
+
+    setState(() {
+      _image = image;
+      _busy = false;
+    });
+  }
+
+  yolov2Tiny(File image) async {
+    var recognitions = await Tflite.detectObjectOnImage(
+        path: image.path,
+        model: "YOLO",
+        threshold: 0.3,
+        imageMean: 0.0,
+        imageStd: 255.0,
+        numResultsPerClass: 1);
+
+    setState(() {
+      _recognitions = recognitions;
+    });
+  }
+
+  ssdMobileNet(File image) async {
+    var recognitions = await Tflite.detectObjectOnImage(
+        path: image.path, numResultsPerClass: 1);
+
+    setState(() {
+      _recognitions = recognitions;
+    });
+  }
+
+  List<Widget> renderBoxes(Size screen) {
+    if (_recognitions == null) return [];
+    if (_imageWidth == null || _imageHeight == null) return [];
+
+    double factorX = screen.width;
+    double factorY = _imageHeight / _imageHeight * screen.width;
+
+    Color blue = Colors.red;
+
+    return _recognitions.map((re) {
+      return Positioned(
+        left: re["rect"]["x"] * factorX,
+        top: re["rect"]["y"] * factorY,
+        width: re["rect"]["w"] * factorX,
+        height: re["rect"]["h"] * factorY,
+        child: Container(
+          decoration: BoxDecoration(
+              border: Border.all(
+            color: blue,
+            width: 3,
+          )),
+          child: Text(
+            "${re["detectedClass"]} ${(re["confidenceInClass"] * 100).toStringAsFixed(0)}%",
+            style: TextStyle(
+              background: Paint()..color = blue,
+              color: Colors.white,
+              fontSize: 15,
+            ),
+          ),
+        ),
+      );
+    }).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    Size size = MediaQuery.of(context).size;
+
+    List<Widget> stackChildren = [];
+
+    stackChildren.add(Positioned(
+      top: 0.0,
+      left: 0.0,
+      width: size.width,
+      child: _image == null ? Text("No Image Selected") : Image.file(_image),
+    ));
+
+    stackChildren.addAll(renderBoxes(size));
+
+    if (_busy) {
+      stackChildren.add(Center(
+        child: CircularProgressIndicator(),
+      ));
+    }
+
     return Scaffold(
       appBar: AppBar(
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
-        child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Invoke "debug painting" (press "p" in the console, choose the
-          // "Toggle Debug Paint" action from the Flutter Inspector in Android
-          // Studio, or the "Toggle Debug Paint" command in Visual Studio Code)
-          // to see the wireframe for each widget.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: <Widget>[
-            Text(
-              'You have pushed the button this many times:',
-            ),
-            Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headline4,
-            ),
-          ],
-        ),
+        title: Text("TFLite Demo"),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: Icon(Icons.add),
-      ), // This trailing comma makes auto-formatting nicer for build methods.
+        child: Icon(Icons.image),
+        tooltip: "Pick Image from gallery",
+        onPressed: selectFromImagePicker,
+      ),
+      body: Stack(
+        children: stackChildren,
+      ),
     );
   }
 }
