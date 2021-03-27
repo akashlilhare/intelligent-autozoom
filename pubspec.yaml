@@ -26,6 +26,8 @@ dependencies:
   tflite: ^1.1.1
   image_picker: ^0.7.3
   image_cropper: ^1.4.0
+  image_crop: ^0.3.4
+  image:
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

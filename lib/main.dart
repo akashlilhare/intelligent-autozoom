@@ -2,9 +2,9 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import 'package:tflite/tflite.dart';
 import 'package:image_picker/image_picker.dart';
-import 'package:image_cropper/image_cropper.dart';
 
 void main() {
   runApp(MyApp());
@@ -67,15 +67,15 @@ class _TfliteHomeState extends State<TfliteHome> {
           labels: "assets/ssd_mobilenet.txt",
         );
       }
-      print(res);
     } on PlatformException {
       print("Failed to load the model");
     }
   }
 
-  pickFromCamera() async {
-    var image = await picker.getImage(source: ImageSource.camera);
-    print(image);
+  pickImage(ImageSource source, Size deviceSize) async {
+    var image = await picker.getImage(
+      source: source,
+    );
     if (image == null) return null;
     setState(() {
       _image = File(image.path);
@@ -83,15 +83,16 @@ class _TfliteHomeState extends State<TfliteHome> {
     predictImage(_image);
   }
 
-  pickFromGallery() async {
-    var image = await picker.getImage(source: ImageSource.gallery);
-    print(image.path);
+  pickFromCamera() async {
+    var image = await picker.getImage(
+      source: ImageSource.camera,
+    );
+
     if (image == null) return null;
     setState(() {
       _image = File(image.path);
     });
     predictImage(_image);
-
   }
 
   predictImage(File image) async {
@@ -109,8 +110,8 @@ class _TfliteHomeState extends State<TfliteHome> {
           setState(() {
             _imageWidth = info.image.width.toDouble();
             _imageHeight = info.image.height.toDouble();
-            print(_imageHeight);
-            print(_imageWidth);
+            print("image height "+_imageHeight.toString());
+            print("image width " + _imageWidth.toString());
           });
         })));
 
@@ -143,45 +144,14 @@ class _TfliteHomeState extends State<TfliteHome> {
     });
   }
 
-  cropImage(File imageFile, int i) async {
-    double factorX = 300;
-    double factorY = _imageHeight / _imageHeight * 300;
-    var obj = _recognitions[i];
-    var a = IOSUiSettings(
-      rectX: obj["rect"]["x"] * factorX,
-      rectY: obj["rect"]["y"] * factorY,
-      rectHeight: obj["rect"]["h"] * factorY,
-      rectWidth: obj["rect"]["w"] * factorX,
-    );
-    File croppedFile = await ImageCropper.cropImage(
-        sourcePath: imageFile.path,
-        aspectRatioPresets: [
-          CropAspectRatioPreset.square,
-          CropAspectRatioPreset.ratio3x2,
-          CropAspectRatioPreset.original,
-          CropAspectRatioPreset.ratio4x3,
-          CropAspectRatioPreset.ratio16x9,
-        ],
-        androidUiSettings: AndroidUiSettings(
+  Map myWidget;
+  Widget toDisplay = Container();
+  Rect newRect;
 
-            toolbarTitle: 'Cropper',
-            toolbarColor: Colors.deepOrange,
-            toolbarWidgetColor: Colors.white,
-            initAspectRatio: CropAspectRatioPreset.original,
-            lockAspectRatio: false),
-       // iosUiSettings: a
-        );
-    print(croppedImage.path);
-    setState(() {
-      croppedImage = croppedFile;
-    });
+  Widget addBox(Size screen) {
 
-    return croppedFile;
-  }
-
-  List<Widget> renderBoxes(Size screen) {
-    if (_recognitions == null) return [];
-    if (_imageWidth == null || _imageHeight == null) return [];
+    if (_recognitions == null) return Container();
+    if (_imageWidth == null || _imageHeight == null) return Container();
 
     double factorX = screen.width;
     double factorY = _imageHeight / _imageHeight * screen.width;
@@ -195,9 +165,37 @@ class _TfliteHomeState extends State<TfliteHome> {
         indexMax = i;
       }
     }
-    cropImage(_image, 0);
-    print("--------------------------" + croppedImage.path);
 
+    print(_recognitions[indexMax]);
+
+    return Positioned(
+      left: _recognitions[indexMax]["rect"]["x"] * factorX,
+      top: _recognitions[indexMax]["rect"]["y"] * factorY,
+      width: _recognitions[indexMax]["rect"]["w"] * factorX,
+      height: _recognitions[indexMax]["rect"]["h"] * factorY,
+      child: Container(
+        decoration: BoxDecoration(
+            border: Border.all(
+          color: blue,
+          width: 3,
+        )),
+        child: Text(
+          "${_recognitions[indexMax]["detectedClass"]} ${(_recognitions[indexMax]["confidenceInClass"] * 100).toStringAsFixed(0)}%",
+          style: TextStyle(
+            background: Paint()..color = blue,
+            color: Colors.white,
+            fontSize: 15,
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> renderBoxes(Size screen) {
+    double factorX = screen.width;
+    double factorY = _imageHeight / _imageHeight * screen.width;
+
+    Color blue = Colors.red;
     return _recognitions.map((re) {
       return Positioned(
         left: re["rect"]["x"] * factorX,
@@ -225,27 +223,26 @@ class _TfliteHomeState extends State<TfliteHome> {
 
   @override
   Widget build(BuildContext context) {
+
     Size size = MediaQuery.of(context).size;
 
     List<Widget> stackChildren = [];
 
     stackChildren.add(Container(
-      // margin: EdgeInsets.only(left: 5),
-      // height: 400,
-      //width: double.infinity,
       child: Positioned(
-        top: 0.0,
-        left: 0.0,
+
         width: size.width,
         child: _image == null
-            ? Text("No Image Selected")
+            ? Padding(padding: EdgeInsets.symmetric(vertical: size.width*.7),
+            child: Center(child: Text("No Image Selected",style: TextStyle(fontSize: 18,fontWeight: FontWeight.w700),)))
             : Image.file(
                 _image,
               ),
       ),
     ));
 
-    stackChildren.addAll(renderBoxes(size));
+    //  stackChildren.addAll(renderBoxes(size));
+    stackChildren.add(addBox(size));
 
     if (_busy) {
       stackChildren.add(Center(
@@ -254,38 +251,44 @@ class _TfliteHomeState extends State<TfliteHome> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text("TFLite Demo"),
-      ),
-      floatingActionButton: Row(
-        children: [
-          ElevatedButton(
-            child: Icon(Icons.camera_alt),
-            onPressed: pickFromCamera,
+
+        appBar: AppBar(
+          title: Text("Image Cropper"),
+          backgroundColor: Colors.purple,
+        ),
+        floatingActionButton: Row(mainAxisAlignment: MainAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.end, children: [
+              MaterialButton(
+                onPressed: () { pickImage(ImageSource.camera, size);},
+                color: Colors.purple,
+                textColor: Colors.white,
+                child: Icon(
+                  Icons.camera_alt,
+                  size: 24,
+                ),
+                padding: EdgeInsets.all(16),
+                shape: CircleBorder(),
+              ),
+              MaterialButton(
+                onPressed: () { pickImage(ImageSource.gallery, size);},
+                color: Colors.purple,
+                textColor: Colors.white,
+                child: Icon(
+                  Icons.image,
+                  size: 24,
+                ),
+                padding: EdgeInsets.all(16),
+                shape: CircleBorder(),
+              ),
+        ]),
+        body: Container(
+          child: Stack(
+            children: stackChildren,
           ),
-          ElevatedButton(
-            child: Icon(Icons.image),
-            onPressed: pickFromGallery,
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          Container(
-            height: 200,
-            child: Stack(
-              children: stackChildren,
-            ),
-          ),
-          Container(
-            child: croppedImage == null
-                ? Container(
-                    child: Text("please select file"),
-                  )
-                : Image.file(_image,alignment: Alignment.lerp(1,1,1),),
-          )
-        ],
-      ),
+        ),
+
+
     );
+
   }
 }
